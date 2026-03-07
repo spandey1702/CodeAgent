@@ -1,18 +1,13 @@
-annotated-types==0.7.0
-anyio==4.12.1
-certifi==2026.1.4
-distro==1.9.0
-exceptiongroup==1.3.1
-h11==0.16.0
-httpcore==1.0.9
-httpx==0.28.1
-idna==3.11
-jiter==0.13.0
-openai==2.18.0
-pydantic==2.12.5
-pydantic_core==2.41.5
-python-dotenv==1.2.1
-sniffio==1.3.1
-tqdm==4.67.3
-typing-inspection==0.4.2
-typing_extensions==4.15.0
+# --- Core AI & Environment ---
+openai>=1.50.0          
+python-dotenv>=1.0.1    
+# --- MCP Framework (The 2026 Standard) ---
+fastmcp>=3.0.0            # v3 adds Providers and better Agent Orchestration
+mcp>=1.2.0                # Official SDK underlying the server
+pydantic>=2.10.0         
+pydantic-settings>=2.4.0  
+httpx>=0.27.2       
+
+# --- Task & File Management ---
+pathlib                   
+tqdm                      
