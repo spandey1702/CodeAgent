@@ -1,13 +1,17 @@
-# --- Core AI & Environment ---
-openai>=1.50.0          
-python-dotenv>=1.0.1    
-# --- MCP Framework (The 2026 Standard) ---
-fastmcp>=3.0.0            # v3 adds Providers and better Agent Orchestration
-mcp>=1.2.0                # Official SDK underlying the server
-pydantic>=2.10.0         
-pydantic-settings>=2.4.0  
-httpx>=0.27.2       
+# --- Core AI ---
+google-generativeai>=0.7.0  
+python-dotenv>=1.0.1
 
-# --- Task & File Management ---
-pathlib                   
-tqdm                      
+# --- MCP Framework ---
+fastmcp>=2.0.0         
+mcp>=1.2.0
+
+# --- Data validation ---
+pydantic>=2.10.0
+pydantic-settings>=2.4.0
+
+# --- HTTP ---
+httpx>=0.27.2
+
+# --- Utilities ---
+tqdm
