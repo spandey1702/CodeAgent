@@ -1,7 +1,7 @@
 import logging
 import sys
 from mcp.server.fastmcp import FastMCP
-from specialized import CoderAgent, ReviewerAgent, DebuggerAgent, DeployerAgent
+from specialized import CoderAgent, ReviewerAgent, DebuggerAgent, ExplainerAgent, DeployerAgent
 
 logging.basicConfig(
     level=logging.INFO,
@@ -99,10 +99,7 @@ def explain_code(code: str) -> str:
         A developer-friendly explanation of the code's purpose, logic, and structure.
     """
     logger.info("explain_code called.")
-    return ReviewerAgent().generate_response(
-        f"Do not review this code for bugs. Instead, explain clearly what it does, "
-        f"how it works, and what each major section is responsible for:\n\n{code}"
-    )
+    return ExplainerAgent().generate_response(code)
 
 
 @mcp.tool()

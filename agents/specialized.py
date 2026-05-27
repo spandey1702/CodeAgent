@@ -1,4 +1,5 @@
-from base import BaseAgent
+import re
+from .base import BaseAgent
 from pathlib import Path
 
 
@@ -31,6 +32,17 @@ class DebuggerAgent(BaseAgent):
         )
 
 
+class ExplainerAgent(BaseAgent):
+    def __init__(self):
+        super().__init__(
+            "Code Explainer",
+            "You explain Python code to developers. "
+            "Describe what the code does, how it works, and what each major section is "
+            "responsible for. Write in clear plain English. Do NOT review for bugs or "
+            "suggest changes — your only job is to explain.",
+        )
+
+
 class DeployerAgent(BaseAgent):
     def __init__(self):
         super().__init__(
@@ -38,10 +50,30 @@ class DeployerAgent(BaseAgent):
             "You help clean and validate code before it is saved to disk.",
         )
 
+    @staticmethod
+    def _extract_code(raw: str) -> str:
+        """
+        Extract the first Python code block from a markdown-formatted response.
+
+        Strategy:
+        1. If the response contains a fenced code block (```python … ``` or
+           ``` … ```), return only that block's content — discarding any
+           surrounding prose.
+        2. Otherwise return the raw text stripped of whitespace, assuming the
+           model returned plain code without fences.
+        """
+        # Match ```python … ``` or ``` … ``` (non-greedy, DOTALL)
+        pattern = re.compile(r"```(?:python)?\s*\n(.*?)```", re.DOTALL)
+        matches = pattern.findall(raw)
+        if matches:
+            return matches[0].strip()
+        # Fallback: strip any stray backtick fences and return as-is
+        return raw.replace("```python", "").replace("```", "").strip()
+
     def deploy(self, raw_code: str, filename: str = "app.py") -> str:
-        """Strip markdown fences and write the code to the dist/ folder."""
+        """Strip markdown fences / surrounding prose, then write to dist/."""
         try:
-            clean_code = raw_code.replace("```python", "").replace("```", "").strip()
+            clean_code = self._extract_code(raw_code)
 
             dist_path = Path("dist")
             dist_path.mkdir(exist_ok=True)

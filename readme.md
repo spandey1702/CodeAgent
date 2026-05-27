@@ -51,7 +51,7 @@ Create a `.env` file (or set environment variables directly):
 GOOGLE_API_KEY=your_gemini_api_key_here
 
 # Optional — defaults shown
-GOOGLE_API_MODEL=gemini-1.5-flash
+GOOGLE_API_MODEL=gemini-2.0-flash
 ```
 
 Get a free Gemini API key at [aistudio.google.com](https://aistudio.google.com).
