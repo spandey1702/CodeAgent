@@ -1,5 +1,5 @@
 # --- Core AI ---
-google-genai>=1.0.0          # google.genai SDK (not google-generativeai)
+google-genai>=1.0.0         
 python-dotenv>=1.0.1
 
 # --- MCP Framework ---
