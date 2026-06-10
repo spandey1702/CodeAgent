@@ -182,7 +182,7 @@ codeagent-mcp/
 ## Local development
 
 ```bash
-git clone https://github.com/yourusername/codeagent-mcp
+git clone https://github.com/spandey1702/CodeAgent
 cd codeagent-mcp
 pip install -e .
 
