@@ -1,7 +1,7 @@
 import logging
 import sys
 from mcp.server.fastmcp import FastMCP
-from specialized import CoderAgent, ReviewerAgent, DebuggerAgent, ExplainerAgent, DeployerAgent
+from .specialized import CoderAgent, ReviewerAgent, DebuggerAgent, ExplainerAgent, DeployerAgent
 
 logging.basicConfig(
     level=logging.INFO,
