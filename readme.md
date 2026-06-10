@@ -206,6 +206,20 @@ twine upload dist/*
 
 ---
 
+## What I Learned
+
+**Prompts are harder than code.**
+I thought the tricky part would be wiring up the agents. It wasn't.
+Getting ReviewerAgent to return a clean PASS/FAIL every single time — not a paragraph, not "mostly okay" — took way more iteration than any of the actual Python. Small wording changes broke the whole pipeline.
+
+**My retry logic had a blind spot.**
+The 3-attempt debug loop worked great until it didn't. Sometimes the agents would just... cycle. Valid-looking code, vague feedback, no progress. I'd add a proper exit condition and a fallback next time instead of assuming 3 tries would always be enough.
+
+**I shipped without a way to measure anything.**
+Biggest regret. I had no benchmark — just vibes about whether outputs were getting better. If I redid this, I'd write the eval script first.
+
+---
+
 ## License
 
 MIT
