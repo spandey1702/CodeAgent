@@ -1,9 +1,5 @@
 # 🤖 codeagent-mcp
 
-[![PyPI version](https://img.shields.io/pypi/v/codeagent-mcp.svg)](https://pypi.org/project/codeagent-mcp/)
-[![Python](https://img.shields.io/pypi/pyversions/codeagent-mcp.svg)](https://pypi.org/project/codeagent-mcp/)
-[![CI](https://github.com/spandey1702/CodeAgent/actions/workflows/test.yml/badge.svg)](https://github.com/spandey1702/CodeAgent/actions/workflows/test.yml)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 A **self-healing SDLC pipeline** as an MCP plugin.
 
