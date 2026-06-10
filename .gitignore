@@ -6,7 +6,21 @@ venv/
 env/
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
+
+# Logs
+*.log
+logs/
+
+# Build / dist output
+dist/
+build/
+*.egg-info/
 
 # IDEs
 .vscode/
 .idea/
+
+# OS
+.DS_Store
