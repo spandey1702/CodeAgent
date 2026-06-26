@@ -1,5 +1,7 @@
 # 🤖 codeagent-mcp
 
+![Tests](https://github.com/spandey1702/CodeAgent/actions/workflows/test.yml/badge.svg)
+
 
 A **self-healing SDLC pipeline** as an MCP plugin.
 
