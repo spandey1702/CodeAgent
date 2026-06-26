@@ -128,11 +128,11 @@ def refactor_code(code: str, instructions: str) -> str:
 @mcp.tool()
 def run_full_pipeline(prompt: str, filename: str = "output.py") -> str:
     """
-    Fully autonomous self-healing pipeline: generate → review → debug → deploy.
+    Fully autonomous self-healing pipeline: generate → review → debug → deploy → explain.
 
     Generates code from a prompt, reviews it, and if it fails automatically
     sends it to the Debugger and re-reviews. Repeats up to 3 times. Deploys
-    to dist/ on success.
+    to dist/ on success, then produces a plain-English explanation of the final code.
 
     Args:
         prompt:   Plain-English description of what the code should do.
@@ -144,10 +144,11 @@ def run_full_pipeline(prompt: str, filename: str = "output.py") -> str:
     """
     logger.info(f"run_full_pipeline called → dist/{filename}")
 
-    coder    = CoderAgent()
-    reviewer = ReviewerAgent()
-    debugger = DebuggerAgent()
-    deployer = DeployerAgent()
+    coder     = CoderAgent()
+    reviewer  = ReviewerAgent()
+    debugger  = DebuggerAgent()
+    deployer  = DeployerAgent()
+    explainer = ExplainerAgent()
 
     # Phase 1: Generate
     logger.info("Phase 1 — Generating code...")
@@ -165,10 +166,15 @@ def run_full_pipeline(prompt: str, filename: str = "output.py") -> str:
             logger.info("Phase 3 — Deploying...")
             deploy_result = deployer.deploy(current_code, filename)
 
+            # Phase 4: Explain
+            logger.info("Phase 4 — Generating explanation...")
+            explanation = explainer.generate_response(current_code)
+
             return (
                 f"✅ Pipeline complete.\n"
                 f"Passed review on attempt {attempt}/{MAX_DEBUG_ATTEMPTS}.\n"
                 f"{deploy_result}\n\n"
+                f"--- Explanation ---\n{explanation}\n\n"
                 f"--- Final Code ---\n{current_code}"
             )
 
