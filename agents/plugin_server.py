@@ -1,7 +1,10 @@
 import logging
 import sys
+from pathlib import Path
 from mcp.server.fastmcp import FastMCP
 from .specialized import CoderAgent, ReviewerAgent, DebuggerAgent, ExplainerAgent, DeployerAgent
+
+_log_file = Path.home() / "code_agent.log"
 
 logging.basicConfig(
     level=logging.INFO,
@@ -9,7 +12,7 @@ logging.basicConfig(
     datefmt="%Y-%m-%d %H:%M:%S",
     handlers=[
         logging.StreamHandler(),
-        logging.FileHandler("code_agent.log"),
+        logging.FileHandler(_log_file),
     ],
 )
 logger = logging.getLogger("Pipeline")
