@@ -8,7 +8,7 @@ from unittest.mock import patch, MagicMock
 import os
 
 # Set a dummy API key so BaseAgent init doesn't raise
-os.environ.setdefault("GOOGLE_API_KEY", "test-key-for-unit-tests")
+os.environ.setdefault("ANTHROPIC_API_KEY", "test-key-for-unit-tests")
 
 from agents.specialized import DeployerAgent
 
@@ -43,7 +43,7 @@ class TestExtractCode:
 class TestDeploy:
     def test_creates_dist_directory(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
-        with patch("agents.base.genai.Client"):
+        with patch("agents.base.anthropic.Anthropic"):
             agent = DeployerAgent()
         result = agent.deploy("x = 1", "test.py")
         assert (tmp_path / "dist" / "test.py").exists()
@@ -51,7 +51,7 @@ class TestDeploy:
 
     def test_strips_fences_before_writing(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
-        with patch("agents.base.genai.Client"):
+        with patch("agents.base.anthropic.Anthropic"):
             agent = DeployerAgent()
         agent.deploy("```python\nx = 42\n```", "out.py")
         content = (tmp_path / "dist" / "out.py").read_text()
@@ -60,7 +60,7 @@ class TestDeploy:
 
     def test_default_filename(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
-        with patch("agents.base.genai.Client"):
+        with patch("agents.base.anthropic.Anthropic"):
             agent = DeployerAgent()
         agent.deploy("pass")
         assert (tmp_path / "dist" / "app.py").exists()

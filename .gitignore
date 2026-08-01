@@ -3,6 +3,7 @@
 
 # Python environment
 venv/
+.venv/
 env/
 __pycache__/
 *.pyc

@@ -28,7 +28,7 @@ DebuggerAgent   →  fixes issues and re-submits for review
 DeployerAgent   →  saves clean code to dist/
 ```
 
-Each agent is a separate Gemini instance with a specialised system prompt. The pipeline is fully autonomous — you prompt once, it handles the rest.
+Each agent is a separate Claude instance with a specialised system prompt. The pipeline is fully autonomous — you prompt once, it handles the rest.
 
 ---
 
@@ -51,13 +51,13 @@ uvx codeagent-mcp
 Create a `.env` file (or set environment variables directly):
 
 ```env
-GOOGLE_API_KEY=your_gemini_api_key_here
+ANTHROPIC_API_KEY=your_anthropic_api_key_here
 
 # Optional — defaults shown
-GOOGLE_API_MODEL=gemini-2.0-flash
+ANTHROPIC_API_MODEL=claude-sonnet-5
 ```
 
-Get a free Gemini API key at [aistudio.google.com](https://aistudio.google.com).
+Get an Anthropic API key at [console.anthropic.com](https://console.anthropic.com).
 
 ---
 
@@ -72,7 +72,7 @@ Edit `~/Library/Application Support/Claude/claude_desktop_config.json`:
       "command": "uvx",
       "args": ["codeagent-mcp"],
       "env": {
-        "GOOGLE_API_KEY": "your_key_here"
+        "ANTHROPIC_API_KEY": "your_key_here"
       }
     }
   }
@@ -94,7 +94,7 @@ Edit `.cursor/mcp.json` in your project root (or the global config):
       "command": "uvx",
       "args": ["codeagent-mcp"],
       "env": {
-        "GOOGLE_API_KEY": "your_key_here"
+        "ANTHROPIC_API_KEY": "your_key_here"
       }
     }
   }
@@ -114,7 +114,7 @@ Edit `~/.codeium/windsurf/mcp_config.json`:
       "command": "uvx",
       "args": ["codeagent-mcp"],
       "env": {
-        "GOOGLE_API_KEY": "your_key_here"
+        "ANTHROPIC_API_KEY": "your_key_here"
       }
     }
   }
@@ -171,7 +171,7 @@ codeagent --cli
 codeagent-mcp/
 ├── agents/
 │   ├── __init__.py         # Exports all agents
-│   ├── base.py             # BaseAgent — shared Gemini setup
+│   ├── base.py             # BaseAgent — shared Claude setup
 │   ├── specialized.py      # CoderAgent, ReviewerAgent, DebuggerAgent, DeployerAgent
 │   └── plugin_server.py    # MCP server + all tool definitions
 ├── dist/                   # Generated code lands here
