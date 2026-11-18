@@ -1,9 +1,10 @@
 """
-Example: audit a file you already wrote.
+Example: audit code you already wrote.
 
-Paste the code as a string and call audit_code.
-The reviewer returns PASS (with notes) or FAIL (with specific issues).
+Run from the repo root with ANTHROPIC_API_KEY set (makes one API call):
+    python examples/audit_existing_code.py
 """
+from codeagent_mcp import ReviewerAgent
 
 CODE_TO_REVIEW = """
 import sqlite3
@@ -15,4 +16,8 @@ def get_user(username):
     return cursor.fetchone()
 """
 
-# Expected result: FAIL — SQL injection vulnerability flagged
+REQUIREMENTS = "Look up a user by username in app.db and return their row."
+
+if __name__ == "__main__":
+    # Expected: FAIL, with the SQL injection flagged
+    print(ReviewerAgent().review(CODE_TO_REVIEW, REQUIREMENTS).as_text())

@@ -1,16 +1,21 @@
 """
-Example: use run_full_pipeline to generate a FastAPI endpoint.
+Example: run the full pipeline to generate a FastAPI endpoint.
 
-Run this from within Claude Desktop, Cursor, or Windsurf after
-installing the MCP server. The prompt below is what you'd type
-in the chat — this file is for documentation purposes.
+Run from the repo root with ANTHROPIC_API_KEY set (makes several API calls):
+    python examples/fastapi_endpoint.py
+
+In Claude Desktop, Cursor or Windsurf, ask: "Use run_full_pipeline to build ..."
+followed by the same requirements.
 """
+from codeagent_mcp.plugin_server import run_full_pipeline
 
-EXAMPLE_PROMPT = """
-Use run_full_pipeline to build a FastAPI endpoint that:
+REQUIREMENTS = """
+Build a FastAPI endpoint that:
 - Accepts a POST request at /users with a JSON body containing name (str) and email (str)
 - Validates that email contains '@'
 - Returns {"status": "created", "user": {"name": ..., "email": ...}} on success
 - Returns a 422 with a clear message on validation failure
-Save it as user_endpoint.py
 """
+
+if __name__ == "__main__":
+    print(run_full_pipeline(REQUIREMENTS, "user_endpoint.py"))

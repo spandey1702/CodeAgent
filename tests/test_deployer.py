@@ -10,7 +10,7 @@ import os
 # Set a dummy API key so BaseAgent init doesn't raise
 os.environ.setdefault("ANTHROPIC_API_KEY", "test-key-for-unit-tests")
 
-from agents.specialized import DeployerAgent
+from codeagent_mcp.specialized import DeployerAgent
 
 
 class TestExtractCode:
@@ -40,10 +40,15 @@ class TestExtractCode:
         assert "first = 1" in result
 
 
+@pytest.fixture(autouse=True)
+def _default_output_dir(monkeypatch):
+    monkeypatch.delenv("CODEAGENT_OUTPUT_DIR", raising=False)
+
+
 class TestDeploy:
     def test_creates_dist_directory(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
-        with patch("agents.base.anthropic.Anthropic"):
+        with patch("codeagent_mcp.base.anthropic.Anthropic"):
             agent = DeployerAgent()
         result = agent.deploy("x = 1", "test.py")
         assert (tmp_path / "dist" / "test.py").exists()
@@ -51,7 +56,7 @@ class TestDeploy:
 
     def test_strips_fences_before_writing(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
-        with patch("agents.base.anthropic.Anthropic"):
+        with patch("codeagent_mcp.base.anthropic.Anthropic"):
             agent = DeployerAgent()
         agent.deploy("```python\nx = 42\n```", "out.py")
         content = (tmp_path / "dist" / "out.py").read_text()
@@ -60,7 +65,45 @@ class TestDeploy:
 
     def test_default_filename(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
-        with patch("agents.base.anthropic.Anthropic"):
+        with patch("codeagent_mcp.base.anthropic.Anthropic"):
             agent = DeployerAgent()
         agent.deploy("pass")
         assert (tmp_path / "dist" / "app.py").exists()
+
+    def test_output_dir_from_env(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("CODEAGENT_OUTPUT_DIR", str(tmp_path / "out"))
+        with patch("codeagent_mcp.base.anthropic.Anthropic"):
+            agent = DeployerAgent()
+        agent.deploy("x = 1", "app.py")
+        assert (tmp_path / "out" / "app.py").read_text() == "x = 1"
+
+
+class TestDeployRejectsUnsafeFilenames:
+    """The filename comes from an AI client: it must never escape the output folder."""
+
+    @pytest.mark.parametrize("filename", [
+        "/tmp/codeagent_escape_test.py",   # absolute path would replace dist/ entirely
+        "../escape.py",                    # climbs out of dist/
+        "sub/dir/app.py",                  # no folders at all
+        "notes.txt",                       # only .py files
+        ".py",
+        "",
+    ])
+    def test_rejected(self, filename, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        with patch("codeagent_mcp.base.anthropic.Anthropic"):
+            agent = DeployerAgent()
+        result = agent.deploy("x = 1", filename)
+        assert result.startswith("ERROR")
+        assert not Path("/tmp/codeagent_escape_test.py").exists()
+        assert not (tmp_path / "escape.py").exists()
+        assert not (tmp_path / "dist").exists() or not any((tmp_path / "dist").iterdir())
+
+
+def test_refuses_code_that_does_not_parse(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    with patch("codeagent_mcp.base.anthropic.Anthropic"):
+        agent = DeployerAgent()
+    result = agent.deploy("```python\ndef broken(:\n    pass\n```", "app.py")
+    assert result.startswith("ERROR") and "SyntaxError" in result
+    assert not (tmp_path / "dist" / "app.py").exists()

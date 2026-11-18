@@ -2,7 +2,10 @@ import logging
 import sys
 from pathlib import Path
 from mcp.server.fastmcp import FastMCP
-from .specialized import CoderAgent, ReviewerAgent, DebuggerAgent, ExplainerAgent, DeployerAgent
+from .specialized import (
+    CoderAgent, ReviewerAgent, DebuggerAgent, ExplainerAgent, DeployerAgent,
+    Review, syntax_error,
+)
 
 _log_file = Path.home() / "code_agent.log"
 
@@ -17,7 +20,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("Pipeline")
 
-MAX_DEBUG_ATTEMPTS = 3
+MAX_REVIEWS = 3   # so at most 2 debug rounds between them
 
 # ── MCP server ────────────────────────────────────────────────────────────────
 mcp = FastMCP("codeagent-mcp")
@@ -41,52 +44,53 @@ def develop_feature(prompt: str) -> str:
 
 
 @mcp.tool()
-def audit_code(code: str) -> str:
+def audit_code(code: str, requirements: str = "") -> str:
     """
     Review Python code for bugs, security issues, and bad practices.
 
     Args:
-        code: The Python code to review.
+        code:         The Python code to review.
+        requirements: Optional. What the code is supposed to do; when given,
+                      the review also checks the code meets it.
 
     Returns:
-        Starts with 'PASS' if code is acceptable, or 'FAIL' followed by
-        a detailed list of issues.
+        'PASS' if the code is acceptable, or 'FAIL' followed by a list of issues.
     """
     logger.info("audit_code called.")
-    return ReviewerAgent().generate_response(code)
+    return ReviewerAgent().review(code, requirements).as_text()
 
 
 @mcp.tool()
-def debug_code(code: str, feedback: str) -> str:
+def debug_code(code: str, feedback: str, requirements: str = "") -> str:
     """
     Fix bugs in Python code based on reviewer feedback.
 
     Args:
-        code:     The buggy Python code.
-        feedback: The reviewer's list of issues to fix.
+        code:         The buggy Python code.
+        feedback:     The reviewer's list of issues to fix.
+        requirements: Optional. What the code is supposed to do.
 
     Returns:
         Corrected Python code as a string.
     """
     logger.info("debug_code called.")
-    return DebuggerAgent().generate_response(
-        f"Code:\n{code}\n\nBugs identified by reviewer:\n{feedback}"
-    )
+    return DebuggerAgent().fix(code, feedback, requirements)
 
 
 @mcp.tool()
 def deploy_to_disk(code: str, filename: str = "generated_code.py") -> str:
     """
-    Clean and save Python code to the dist/ folder.
+    Clean and save Python code to the output folder (dist/ by default).
 
     Args:
         code:     Python code to save (markdown fences are stripped automatically).
-        filename: Output filename inside dist/ (default: generated_code.py).
+                  It must parse as Python.
+        filename: A plain .py filename, with no folders (default: generated_code.py).
 
     Returns:
         Success message with the file path, or an error message.
     """
-    logger.info(f"deploy_to_disk called → dist/{filename}")
+    logger.info(f"deploy_to_disk called → {filename}")
     return DeployerAgent().deploy(code, filename)
 
 
@@ -102,7 +106,7 @@ def explain_code(code: str) -> str:
         A developer-friendly explanation of the code's purpose, logic, and structure.
     """
     logger.info("explain_code called.")
-    return ExplainerAgent().generate_response(code)
+    return ExplainerAgent().explain(code)
 
 
 @mcp.tool()
@@ -119,33 +123,39 @@ def refactor_code(code: str, instructions: str) -> str:
         Refactored Python code as a string.
     """
     logger.info("refactor_code called.")
-    return CoderAgent().generate_response(
-        f"Refactor the following Python code. Instructions: {instructions}\n\n"
-        f"Code:\n{code}\n\n"
-        f"Return only the refactored code with no extra explanation."
-    )
+    return CoderAgent().refactor(code, instructions)
 
 
 # ── Full autonomous pipeline (killer feature) ─────────────────────────────────
 
+def _check(code: str, requirements: str, reviewer: ReviewerAgent) -> Review:
+    """Syntax first (free and certain), then the reviewer (costs an API call)."""
+    error = syntax_error(code)
+    if error:
+        logger.info(f"Syntax check failed: {error}")
+        return Review(passed=False, issues=[f"The code does not parse: {error}"])
+    return reviewer.review(code, requirements)
+
+
 @mcp.tool()
 def run_full_pipeline(prompt: str, filename: str = "output.py") -> str:
     """
-    Fully autonomous self-healing pipeline: generate → review → debug → deploy → explain.
+    Fully autonomous self-healing pipeline: generate → check → debug → deploy → explain.
 
-    Generates code from a prompt, reviews it, and if it fails automatically
-    sends it to the Debugger and re-reviews. Repeats up to 3 times. Deploys
-    to dist/ on success, then produces a plain-English explanation of the final code.
+    Generates code from a prompt, checks that it parses, then has it reviewed
+    against the prompt. On failure the Debugger fixes it and it is checked
+    again: up to 3 checks and 2 debug rounds. Deploys on success, then
+    produces a plain-English explanation of the final code.
 
     Args:
         prompt:   Plain-English description of what the code should do.
-        filename: Output filename inside dist/ (default: output.py).
+        filename: A plain .py filename for the output (default: output.py).
 
     Returns:
         A summary of the pipeline result, including which attempt passed
         and the final file path, or an explanation of why it was halted.
     """
-    logger.info(f"run_full_pipeline called → dist/{filename}")
+    logger.info(f"run_full_pipeline called → {filename}")
 
     coder     = CoderAgent()
     reviewer  = ReviewerAgent()
@@ -157,12 +167,12 @@ def run_full_pipeline(prompt: str, filename: str = "output.py") -> str:
     logger.info("Phase 1 — Generating code...")
     current_code = coder.generate_response(prompt)
 
-    # Phase 2: Review + self-healing loop
-    for attempt in range(1, MAX_DEBUG_ATTEMPTS + 1):
-        logger.info(f"Phase 2 — Review attempt {attempt}/{MAX_DEBUG_ATTEMPTS}...")
-        feedback = reviewer.generate_response(current_code)
+    # Phase 2: Check + self-healing loop
+    for attempt in range(1, MAX_REVIEWS + 1):
+        logger.info(f"Phase 2 — Check {attempt}/{MAX_REVIEWS}...")
+        review = _check(current_code, prompt, reviewer)
 
-        if "PASS" in feedback.upper():
+        if review.passed:
             logger.info(f"Review passed on attempt {attempt}.")
 
             # Phase 3: Deploy
@@ -171,29 +181,27 @@ def run_full_pipeline(prompt: str, filename: str = "output.py") -> str:
 
             # Phase 4: Explain
             logger.info("Phase 4 — Generating explanation...")
-            explanation = explainer.generate_response(current_code)
+            explanation = explainer.explain(current_code)
 
             return (
                 f"✅ Pipeline complete.\n"
-                f"Passed review on attempt {attempt}/{MAX_DEBUG_ATTEMPTS}.\n"
+                f"Passed review on attempt {attempt}/{MAX_REVIEWS}.\n"
                 f"{deploy_result}\n\n"
                 f"--- Explanation ---\n{explanation}\n\n"
                 f"--- Final Code ---\n{current_code}"
             )
 
-        logger.warning(f"Review failed on attempt {attempt}.")
+        logger.warning(f"Check failed on attempt {attempt}.")
 
-        if attempt == MAX_DEBUG_ATTEMPTS:
+        if attempt == MAX_REVIEWS:
             return (
-                f"🛑 Pipeline halted after {MAX_DEBUG_ATTEMPTS} failed review attempts.\n\n"
-                f"Last reviewer feedback:\n{feedback}\n\n"
+                f"🛑 Pipeline halted after {MAX_REVIEWS} failed checks.\n\n"
+                f"Last review:\n{review.as_text()}\n\n"
                 f"Last code produced:\n{current_code}"
             )
 
-        logger.info(f"Sending to Debugger (attempt {attempt})...")
-        current_code = debugger.generate_response(
-            f"Code:\n{current_code}\n\nBugs identified by reviewer:\n{feedback}"
-        )
+        logger.info(f"Sending to Debugger (round {attempt})...")
+        current_code = debugger.fix(current_code, review.as_text(), prompt)
 
 
 # ── CLI + package entrypoint ──────────────────────────────────────────────────
