@@ -13,6 +13,7 @@ dependencies = [
     "anthropic>=2.10.0",  # output_config (effort) and server-side refusal fallbacks
     "python-dotenv>=1.0.1",
     "mcp>=1.2.0,<2",      # mcp 2.x renamed FastMCP; the server doesn't start on it
+    "requests>=2.31.0",   # deploy_to_github — GitHub REST API calls
 ]
 
 [project.scripts]

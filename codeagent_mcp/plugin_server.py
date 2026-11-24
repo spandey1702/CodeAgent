@@ -4,7 +4,7 @@ from pathlib import Path
 from mcp.server.fastmcp import FastMCP
 from .specialized import (
     CoderAgent, ReviewerAgent, DebuggerAgent, ExplainerAgent, DeployerAgent,
-    Review, syntax_error,
+    SupervisorAgent, Review, syntax_error,
 )
 
 _log_file = Path.home() / "code_agent.log"
@@ -21,6 +21,9 @@ logging.basicConfig(
 logger = logging.getLogger("Pipeline")
 
 MAX_REVIEWS = 3   # so at most 2 debug rounds between them
+
+MAX_RETRIES = 3            # run_supervised_pipeline: debug attempts specifically
+MAX_SUPERVISOR_STEPS = 8   # run_supervised_pipeline: absolute backstop across all actions
 
 # ── MCP server ────────────────────────────────────────────────────────────────
 mcp = FastMCP("codeagent-mcp")
@@ -92,6 +95,26 @@ def deploy_to_disk(code: str, filename: str = "generated_code.py") -> str:
     """
     logger.info(f"deploy_to_disk called → {filename}")
     return DeployerAgent().deploy(code, filename)
+
+
+@mcp.tool()
+def deploy_to_github(code: str, filename: str, repo: str, base_branch: str = "main") -> str:
+    """
+    Open a PR on GitHub adding/updating a file. Never pushes to base_branch
+    directly — every deploy goes through a new branch + pull request.
+
+    Args:
+        code:        Python code to deploy (markdown fences stripped automatically).
+                     It must parse as Python.
+        filename:    A plain .py filename, with no folders.
+        repo:        "owner/name" — must be listed in GITHUB_REPO_ALLOWLIST.
+        base_branch: Branch to open the PR against (default: main).
+
+    Returns:
+        The opened PR's URL, or an error message.
+    """
+    logger.info(f"deploy_to_github called → {repo}:{filename}")
+    return DeployerAgent().deploy_to_github(code, filename, repo, base_branch)
 
 
 @mcp.tool()
@@ -202,6 +225,100 @@ def run_full_pipeline(prompt: str, filename: str = "output.py") -> str:
 
         logger.info(f"Sending to Debugger (round {attempt})...")
         current_code = debugger.fix(current_code, review.as_text(), prompt)
+
+
+@mcp.tool()
+def run_supervised_pipeline(
+    prompt: str,
+    filename: str = "output.py",
+    deploy_target: str = "disk",
+    repo: str = "",
+) -> str:
+    """
+    Supervisor-driven pipeline: an LLM Supervisor decides, step by step, whether to
+    review, debug, deploy, or halt — instead of run_full_pipeline's fixed loop.
+
+    Args:
+        prompt:        Plain-English description of what the code should do.
+        filename:      A plain .py filename for the output (default: output.py).
+        deploy_target: "disk" (default) or "github".
+        repo:          Required if deploy_target == "github" — "owner/name".
+
+    Returns:
+        A summary of the pipeline result, or why the Supervisor halted it.
+    """
+    logger.info(f"run_supervised_pipeline called → {deploy_target}:{filename}")
+
+    supervisor = SupervisorAgent()
+    coder, reviewer, debugger, deployer, explainer = (
+        CoderAgent(), ReviewerAgent(), DebuggerAgent(), DeployerAgent(), ExplainerAgent()
+    )
+
+    logger.info("Phase 1 — Generating code...")
+    current_code = coder.generate_response(prompt)
+    history = ["Coder produced initial code."]
+    last_review: Review | None = None
+    debug_count = 0
+
+    for step in range(1, MAX_SUPERVISOR_STEPS + 1):
+        if debug_count >= MAX_RETRIES:
+            return f"🛑 Halted: hit the {MAX_RETRIES}-retry limit.\n\nLast code:\n{current_code}"
+
+        decision_raw = supervisor.decide(
+            prompt, current_code, history,
+            last_review.as_text() if last_review else "", step, MAX_SUPERVISOR_STEPS,
+        )
+        lines = decision_raw.strip().splitlines()
+        decision = lines[0].strip().upper() if lines else ""
+        logger.info(f"Supervisor step {step}: {decision}")
+
+        if decision == "REVIEW":
+            last_review = _check(current_code, prompt, reviewer)
+            history.append(f"Reviewer said: {last_review.as_text().splitlines()[0]}")
+
+        elif decision == "DEBUG":
+            debug_count += 1
+            current_code = debugger.fix(
+                current_code, last_review.as_text() if last_review else "", prompt
+            )
+            history.append(f"Debugger produced a revised version (retry {debug_count}/{MAX_RETRIES}).")
+
+        elif decision == "DEPLOY":
+            logger.info(f"Phase — Deploying to {deploy_target}...")
+            if deploy_target == "github":
+                if not repo:
+                    return "ERROR: deploy_target='github' requires a repo argument."
+                deploy_result = deployer.deploy_to_github(current_code, filename, repo)
+            else:
+                deploy_result = deployer.deploy(current_code, filename)
+
+            explanation = explainer.explain(current_code)
+            retry_word = "retry" if debug_count == 1 else "retries"
+            return (
+                f"✅ Supervised pipeline complete after {step} step(s), {debug_count} {retry_word}.\n"
+                f"{deploy_result}\n\n"
+                f"--- Explanation ---\n{explanation}\n\n"
+                f"--- Final Code ---\n{current_code}"
+            )
+
+        elif decision == "HALT":
+            return (
+                f"🛑 Supervisor halted after {step} step(s).\n"
+                f"Reason: {decision_raw.strip()}\n\n"
+                f"Last code produced:\n{current_code}"
+            )
+
+        else:
+            logger.error(f"Unrecognized supervisor decision: {decision_raw[:200]!r}")
+            return (
+                f"🛑 Halted: unrecognized supervisor output.\n\n"
+                f"Raw response:\n{decision_raw}\n\nLast code produced:\n{current_code}"
+            )
+
+    return (
+        f"🛑 Halted: hit the {MAX_SUPERVISOR_STEPS}-step safety cap without the "
+        f"Supervisor choosing DEPLOY or HALT.\n\nLast code produced:\n{current_code}"
+    )
 
 
 # ── CLI + package entrypoint ──────────────────────────────────────────────────

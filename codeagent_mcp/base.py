@@ -28,7 +28,7 @@ class AgentResponseError(RuntimeError):
 
 
 class BaseAgent:
-    def __init__(self, role: str, instructions: str, effort: str = "high"):
+    def __init__(self, role: str, instructions: str, effort: str = "high", model: str | None = None):
         api_key = os.getenv("ANTHROPIC_API_KEY")
         if not api_key:
             raise ValueError(
@@ -45,7 +45,9 @@ class BaseAgent:
         # errors with exponential backoff. Bad requests and auth errors are not
         # retried: they would fail the same way every time.
         self._client = anthropic.Anthropic(api_key=api_key, max_retries=4)
-        self._model_name = os.getenv("ANTHROPIC_API_MODEL", DEFAULT_MODEL)
+        # Per-agent model: an explicit `model` arg wins, then ANTHROPIC_API_MODEL
+        # (shared override for all agents), then DEFAULT_MODEL.
+        self._model_name = model or os.getenv("ANTHROPIC_API_MODEL", DEFAULT_MODEL)
         self._system_instruction = f"You are a {self.role}. {self.instructions}"
 
     def generate_response(self, user_query: str, output_schema: dict | None = None) -> str:

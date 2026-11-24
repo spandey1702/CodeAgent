@@ -12,8 +12,8 @@ from codeagent_mcp import plugin_server
 from codeagent_mcp.specialized import Review
 
 EXPECTED_TOOLS = {
-    "develop_feature", "audit_code", "debug_code", "deploy_to_disk",
-    "explain_code", "refactor_code", "run_full_pipeline",
+    "develop_feature", "audit_code", "debug_code", "deploy_to_disk", "deploy_to_github",
+    "explain_code", "refactor_code", "run_full_pipeline", "run_supervised_pipeline",
 }
 
 
