@@ -8,10 +8,12 @@ os.environ.setdefault("ANTHROPIC_API_KEY", "test-key-for-unit-tests")
 
 from codeagent_mcp.specialized import (
     CoderAgent, ReviewerAgent, DebuggerAgent, ExplainerAgent, DeployerAgent,
-    Review, REVIEW_SCHEMA, syntax_error, wrap_untrusted,
+    SupervisorAgent, Review, REVIEW_SCHEMA, syntax_error, wrap_untrusted,
 )
 
-AGENT_CLASSES = [CoderAgent, ReviewerAgent, DebuggerAgent, ExplainerAgent, DeployerAgent]
+AGENT_CLASSES = [
+    CoderAgent, ReviewerAgent, DebuggerAgent, ExplainerAgent, DeployerAgent, SupervisorAgent,
+]
 
 
 @pytest.mark.parametrize("agent_cls", AGENT_CLASSES, ids=lambda c: c.__name__)
@@ -21,6 +23,42 @@ def test_agent_instantiates(agent_cls):
         assert agent.role
         assert agent.instructions
         assert agent._model_name
+
+
+class TestPerAgentModels:
+    """Each agent has its own default and its own env var, independent of the
+    others and of the shared ANTHROPIC_API_MODEL fallback."""
+
+    DEFAULTS = {
+        CoderAgent: ("CODER_MODEL", "claude-opus-5-5"),
+        ReviewerAgent: ("REVIEWER_MODEL", "claude-opus-5-5"),
+        DebuggerAgent: ("DEBUGGER_MODEL", "claude-sonnet-5-5"),
+        ExplainerAgent: ("EXPLAINER_MODEL", "claude-sonnet-5-5"),
+        SupervisorAgent: ("SUPERVISOR_MODEL", "claude-opus-5-5"),
+    }
+
+    @pytest.mark.parametrize("agent_cls", list(DEFAULTS), ids=lambda c: c.__name__)
+    def test_default_model(self, agent_cls, monkeypatch):
+        monkeypatch.delenv("ANTHROPIC_API_MODEL", raising=False)
+        for env_var, _ in self.DEFAULTS.values():
+            monkeypatch.delenv(env_var, raising=False)
+        _, expected = self.DEFAULTS[agent_cls]
+        with patch("codeagent_mcp.base.anthropic.Anthropic"):
+            assert agent_cls()._model_name == expected
+
+    @pytest.mark.parametrize("agent_cls", list(DEFAULTS), ids=lambda c: c.__name__)
+    def test_env_var_overrides_just_that_agent(self, agent_cls, monkeypatch):
+        env_var, _ = self.DEFAULTS[agent_cls]
+        monkeypatch.setenv(env_var, "claude-haiku-4-5")
+        with patch("codeagent_mcp.base.anthropic.Anthropic"):
+            assert agent_cls()._model_name == "claude-haiku-4-5"
+
+    def test_debugger_unaffected_by_coder_env_var(self, monkeypatch):
+        monkeypatch.setenv("CODER_MODEL", "claude-haiku-4-5")
+        monkeypatch.delenv("DEBUGGER_MODEL", raising=False)
+        monkeypatch.delenv("ANTHROPIC_API_MODEL", raising=False)
+        with patch("codeagent_mcp.base.anthropic.Anthropic"):
+            assert DebuggerAgent()._model_name == "claude-sonnet-5-5"
 
 
 def _reviewer_replying(verdict: str, issues: list[str]):

@@ -62,6 +62,11 @@ class TestBaseAgentInit:
         monkeypatch.setenv("ANTHROPIC_API_MODEL", "claude-opus-5-5")
         assert ConcreteAgent()._model_name == "claude-opus-5-5"
 
+    def test_explicit_model_wins_over_env(self, monkeypatch, client):
+        monkeypatch.setenv("ANTHROPIC_API_MODEL", "claude-opus-5-5")
+        agent = BaseAgent("Tester", "You are a test agent.", model="claude-haiku-4-5")
+        assert agent._model_name == "claude-haiku-4-5"
+
 
 class TestGenerateResponse:
     def test_returns_text_on_success(self, client):
