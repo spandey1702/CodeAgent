@@ -23,20 +23,30 @@ def test_server_registers_all_tools():
     assert {tool.name for tool in tools} == EXPECTED_TOOLS
 
 
-def _agents(code="x = 1", reviews=(), fixes=()):
-    """Mocked agent classes for the pipeline, with canned outputs in order."""
-    coder, reviewer, debugger, explainer = MagicMock(), MagicMock(), MagicMock(), MagicMock()
+def _agents(code="x = 1", reviews=(), fixes=(), test_results=None):
+    """Mocked agent classes for the pipeline, with canned outputs in order.
+    test_results defaults to always-pass so existing review-only tests don't
+    need to care about the testing phase at all."""
+    coder, reviewer, tester, debugger, explainer = (
+        MagicMock(), MagicMock(), MagicMock(), MagicMock(), MagicMock()
+    )
     coder.generate_response.return_value = code
     reviewer.review.side_effect = list(reviews)
     debugger.fix.side_effect = list(fixes)
+    tester.write_tests.return_value = "test code"
     explainer.explain.return_value = "Sets x to 1."
     classes = dict(
         CoderAgent=MagicMock(return_value=coder),
         ReviewerAgent=MagicMock(return_value=reviewer),
+        TesterAgent=MagicMock(return_value=tester),
         DebuggerAgent=MagicMock(return_value=debugger),
         ExplainerAgent=MagicMock(return_value=explainer),
+        run_tests=MagicMock(
+            side_effect=list(test_results) if test_results is not None else None,
+            return_value=TestResult(passed=True) if test_results is None else None,
+        ),
     )
-    return classes, reviewer, debugger
+    return classes, reviewer, tester, debugger
 
 
 class TestWriteAndRunTests:
@@ -68,18 +78,19 @@ def test_pipeline_does_not_deploy_after_failed_reviews(monkeypatch, tmp_path):
     """Regression: 'FAIL: ... password' used to count as PASS and get deployed."""
     monkeypatch.setenv("CODEAGENT_OUTPUT_DIR", str(tmp_path))
     fail = Review(False, ["hardcoded password"])
-    classes, reviewer, debugger = _agents(reviews=[fail] * 3, fixes=["x = 2", "x = 3"])
+    classes, reviewer, tester, debugger = _agents(reviews=[fail] * 3, fixes=["x = 2", "x = 3"])
     with patch.multiple(plugin_server, **classes):
         result = plugin_server.run_full_pipeline("write a login", "app.py")
     assert result.startswith("🛑")
     assert reviewer.review.call_count == 3
     assert debugger.fix.call_count == 2          # 3 checks, 2 debug rounds
+    tester.write_tests.assert_not_called()       # never reached: review never passed
     assert not (tmp_path / "app.py").exists()
 
 
 def test_reviewer_and_debugger_receive_the_requirements(monkeypatch, tmp_path):
     monkeypatch.setenv("CODEAGENT_OUTPUT_DIR", str(tmp_path))
-    classes, reviewer, debugger = _agents(
+    classes, reviewer, tester, debugger = _agents(
         reviews=[Review(False, ["ignores negatives"]), Review(True)], fixes=["x = 2"])
     with patch.multiple(plugin_server, **classes):
         plugin_server.run_full_pipeline("sum the list", "app.py")
@@ -89,23 +100,60 @@ def test_reviewer_and_debugger_receive_the_requirements(monkeypatch, tmp_path):
 
 def test_syntax_error_skips_the_reviewer_and_goes_to_the_debugger(monkeypatch, tmp_path):
     monkeypatch.setenv("CODEAGENT_OUTPUT_DIR", str(tmp_path))
-    classes, reviewer, debugger = _agents(
+    classes, reviewer, tester, debugger = _agents(
         code="def f(:\n    pass", reviews=[Review(True)], fixes=["def f():\n    pass"])
     with patch.multiple(plugin_server, **classes):
         result = plugin_server.run_full_pipeline("define f", "app.py")
     assert "SyntaxError" in debugger.fix.call_args.args[1]
     assert reviewer.review.call_count == 1       # only the fixed code was reviewed
-    assert "Passed review on attempt 2" in result
+    assert "Passed review and tests on attempt 2" in result
     assert (tmp_path / "app.py").read_text() == "def f():\n    pass"
 
 
 def test_pipeline_deploys_after_a_pass(monkeypatch, tmp_path):
     monkeypatch.setenv("CODEAGENT_OUTPUT_DIR", str(tmp_path))
-    classes, _, _ = _agents(reviews=[Review(True)])
+    classes, *_ = _agents(reviews=[Review(True)])
     with patch.multiple(plugin_server, **classes):
         result = plugin_server.run_full_pipeline("set x", "app.py")
-    assert "Passed review on attempt 1" in result
+    assert "Passed review and tests on attempt 1" in result
     assert (tmp_path / "app.py").read_text() == "x = 1"
+
+
+def test_failed_tests_go_to_the_debugger_not_deploy(monkeypatch, tmp_path):
+    """A clean review doesn't bypass testing: a failing test run still sends
+    the code back to the Debugger, with the real test output as feedback."""
+    monkeypatch.setenv("CODEAGENT_OUTPUT_DIR", str(tmp_path))
+    classes, reviewer, tester, debugger = _agents(
+        code="def f(a, b): return a - b",
+        reviews=[Review(True), Review(True)],
+        fixes=["def f(a, b): return a + b"],
+        test_results=[
+            TestResult(passed=False, output="assert f(1, 2) == 3\nAssertionError"),
+            TestResult(passed=True),
+        ],
+    )
+    with patch.multiple(plugin_server, **classes):
+        result = plugin_server.run_full_pipeline("write f(a, b) that adds a and b", "app.py")
+    assert "Passed review and tests on attempt 2" in result
+    assert debugger.fix.call_args.args[1].startswith("FAIL")
+    assert "AssertionError" in debugger.fix.call_args.args[1]
+    assert (tmp_path / "app.py").read_text() == "def f(a, b): return a + b"
+
+
+def test_halts_after_max_attempts_of_failing_tests(monkeypatch, tmp_path):
+    monkeypatch.setenv("CODEAGENT_OUTPUT_DIR", str(tmp_path))
+    fail_test = TestResult(passed=False, output="2 failed, 0 passed")
+    classes, reviewer, tester, debugger = _agents(
+        reviews=[Review(True)] * 3,
+        fixes=["x = 2", "x = 3"],
+        test_results=[fail_test] * 3,
+    )
+    with patch.multiple(plugin_server, **classes):
+        result = plugin_server.run_full_pipeline("set x", "app.py")
+    assert result.startswith("🛑")
+    assert "passed review but failed tests" in result
+    assert "2 failed, 0 passed" in result
+    assert not (tmp_path / "app.py").exists()
 
 
 def _supervised_agents(code="x = 1", decisions=(), reviews=(), fixes=()):

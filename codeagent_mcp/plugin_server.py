@@ -182,12 +182,15 @@ def _check(code: str, requirements: str, reviewer: ReviewerAgent) -> Review:
 @mcp.tool()
 def run_full_pipeline(prompt: str, filename: str = "output.py") -> str:
     """
-    Fully autonomous self-healing pipeline: generate → check → debug → deploy → explain.
+    Fully autonomous self-healing pipeline: generate → check → test → debug →
+    deploy → explain.
 
-    Generates code from a prompt, checks that it parses, then has it reviewed
-    against the prompt. On failure the Debugger fixes it and it is checked
-    again: up to 3 checks and 2 debug rounds. Deploys on success, then
-    produces a plain-English explanation of the final code.
+    Generates code from a prompt, checks that it parses, has it reviewed
+    against the prompt, then has real pytest tests written and run against it.
+    A failure at either the review or the test stage sends the code to the
+    Debugger and tries again: up to 3 attempts total, so at most 2 debug
+    rounds. Deploys only once both review and tests pass, then produces a
+    plain-English explanation of the final code.
 
     Args:
         prompt:   Plain-English description of what the code should do.
@@ -201,6 +204,7 @@ def run_full_pipeline(prompt: str, filename: str = "output.py") -> str:
 
     coder     = CoderAgent()
     reviewer  = ReviewerAgent()
+    tester    = TesterAgent()
     debugger  = DebuggerAgent()
     deployer  = DeployerAgent()
     explainer = ExplainerAgent()
@@ -209,29 +213,49 @@ def run_full_pipeline(prompt: str, filename: str = "output.py") -> str:
     logger.info("Phase 1 — Generating code...")
     current_code = coder.generate_response(prompt)
 
-    # Phase 2: Check + self-healing loop
+    # Phase 2: Check + self-healing loop (a failed test counts the same as a
+    # failed review — both go to the Debugger within the same attempt budget)
     for attempt in range(1, MAX_REVIEWS + 1):
         logger.info(f"Phase 2 — Check {attempt}/{MAX_REVIEWS}...")
         review = _check(current_code, prompt, reviewer)
 
         if review.passed:
-            logger.info(f"Review passed on attempt {attempt}.")
+            logger.info(f"Review passed on attempt {attempt}. Running tests...")
+            test_code = tester.write_tests(current_code, prompt)
+            test_result = run_tests(current_code, test_code)
 
-            # Phase 3: Deploy
-            logger.info("Phase 3 — Deploying...")
-            deploy_result = deployer.deploy(current_code, filename)
+            if test_result.passed:
+                logger.info("Tests passed.")
 
-            # Phase 4: Explain
-            logger.info("Phase 4 — Generating explanation...")
-            explanation = explainer.explain(current_code)
+                # Phase 3: Deploy
+                logger.info("Phase 3 — Deploying...")
+                deploy_result = deployer.deploy(current_code, filename)
 
-            return (
-                f"✅ Pipeline complete.\n"
-                f"Passed review on attempt {attempt}/{MAX_REVIEWS}.\n"
-                f"{deploy_result}\n\n"
-                f"--- Explanation ---\n{explanation}\n\n"
-                f"--- Final Code ---\n{current_code}"
-            )
+                # Phase 4: Explain
+                logger.info("Phase 4 — Generating explanation...")
+                explanation = explainer.explain(current_code)
+
+                return (
+                    f"✅ Pipeline complete.\n"
+                    f"Passed review and tests on attempt {attempt}/{MAX_REVIEWS}.\n"
+                    f"{deploy_result}\n\n"
+                    f"--- Explanation ---\n{explanation}\n\n"
+                    f"--- Final Code ---\n{current_code}"
+                )
+
+            logger.warning(f"Tests failed on attempt {attempt}.")
+
+            if attempt == MAX_REVIEWS:
+                return (
+                    f"🛑 Pipeline halted after {MAX_REVIEWS} attempts — last attempt "
+                    f"passed review but failed tests.\n\n"
+                    f"Test output:\n{test_result.output}\n\n"
+                    f"Last code produced:\n{current_code}"
+                )
+
+            logger.info(f"Sending to Debugger (round {attempt}) — failed tests...")
+            current_code = debugger.fix(current_code, test_result.as_text(), prompt)
+            continue
 
         logger.warning(f"Check failed on attempt {attempt}.")
 
