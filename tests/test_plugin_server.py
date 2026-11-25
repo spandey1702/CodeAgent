@@ -9,11 +9,12 @@ from unittest.mock import patch, MagicMock
 os.environ.setdefault("ANTHROPIC_API_KEY", "test-key-for-unit-tests")
 
 from codeagent_mcp import plugin_server
-from codeagent_mcp.specialized import Review
+from codeagent_mcp.specialized import Review, TestResult, TesterAgent
 
 EXPECTED_TOOLS = {
-    "develop_feature", "audit_code", "debug_code", "deploy_to_disk", "deploy_to_github",
-    "explain_code", "refactor_code", "run_full_pipeline", "run_supervised_pipeline",
+    "develop_feature", "audit_code", "debug_code", "write_and_run_tests",
+    "deploy_to_disk", "deploy_to_github", "explain_code", "refactor_code",
+    "run_full_pipeline", "run_supervised_pipeline",
 }
 
 
@@ -36,6 +37,31 @@ def _agents(code="x = 1", reviews=(), fixes=()):
         ExplainerAgent=MagicMock(return_value=explainer),
     )
     return classes, reviewer, debugger
+
+
+class TestWriteAndRunTests:
+    def test_writes_then_runs_and_returns_pass_text(self):
+        tester = MagicMock()
+        tester.write_tests.return_value = "test code"
+        with patch.multiple(
+            plugin_server,
+            TesterAgent=MagicMock(return_value=tester),
+            run_tests=MagicMock(return_value=TestResult(passed=True)),
+        ):
+            result = plugin_server.write_and_run_tests("x = 1", "set x to 1")
+        tester.write_tests.assert_called_once_with("x = 1", "set x to 1")
+        assert result == "PASS"
+
+    def test_returns_fail_text_with_output(self):
+        tester = MagicMock()
+        tester.write_tests.return_value = "test code"
+        with patch.multiple(
+            plugin_server,
+            TesterAgent=MagicMock(return_value=tester),
+            run_tests=MagicMock(return_value=TestResult(passed=False, output="1 failed")),
+        ):
+            result = plugin_server.write_and_run_tests("x = 1", "set x to 1")
+        assert result == "FAIL\n1 failed"
 
 
 def test_pipeline_does_not_deploy_after_failed_reviews(monkeypatch, tmp_path):

@@ -4,7 +4,7 @@ from pathlib import Path
 from mcp.server.fastmcp import FastMCP
 from .specialized import (
     CoderAgent, ReviewerAgent, DebuggerAgent, ExplainerAgent, DeployerAgent,
-    SupervisorAgent, Review, syntax_error,
+    SupervisorAgent, TesterAgent, Review, TestResult, syntax_error, run_tests,
 )
 
 _log_file = Path.home() / "code_agent.log"
@@ -78,6 +78,25 @@ def debug_code(code: str, feedback: str, requirements: str = "") -> str:
     """
     logger.info("debug_code called.")
     return DebuggerAgent().fix(code, feedback, requirements)
+
+
+@mcp.tool()
+def write_and_run_tests(code: str, requirements: str = "") -> str:
+    """
+    Write pytest tests grounded in the requirements, then actually run them
+    against the code in an isolated subprocess (not a hardened sandbox).
+
+    Args:
+        code:         The Python code to test.
+        requirements: What the code is supposed to do. Expected behaviour comes
+                      from this, not from how the code currently behaves.
+
+    Returns:
+        'PASS' if all tests pass, or 'FAIL' followed by the real pytest output.
+    """
+    logger.info("write_and_run_tests called.")
+    test_code = TesterAgent().write_tests(code, requirements)
+    return run_tests(code, test_code).as_text()
 
 
 @mcp.tool()
