@@ -156,17 +156,19 @@ def test_halts_after_max_attempts_of_failing_tests(monkeypatch, tmp_path):
     assert not (tmp_path / "app.py").exists()
 
 
-def _supervised_agents(code="x = 1", decisions=(), reviews=(), fixes=()):
+def _supervised_agents(code="x = 1", decisions=(), reviews=(), fixes=(), test_results=None):
     """Mocked agent classes for run_supervised_pipeline, including the Supervisor
     and Deployer (run_full_pipeline's _agents() doesn't mock DeployerAgent since
     it writes to CODEAGENT_OUTPUT_DIR for real; the supervised pipeline mocks it
-    so deploy_to_github can be asserted on without a real network call)."""
-    supervisor, coder, reviewer, debugger, deployer, explainer = (
-        MagicMock(), MagicMock(), MagicMock(), MagicMock(), MagicMock(), MagicMock()
+    so deploy_to_github can be asserted on without a real network call).
+    test_results defaults to always-pass, same reasoning as _agents()."""
+    supervisor, coder, reviewer, tester, debugger, deployer, explainer = (
+        MagicMock(), MagicMock(), MagicMock(), MagicMock(), MagicMock(), MagicMock(), MagicMock()
     )
     supervisor.decide.side_effect = list(decisions)
     coder.generate_response.return_value = code
     reviewer.review.side_effect = list(reviews)
+    tester.write_tests.return_value = "test code"
     debugger.fix.side_effect = list(fixes)
     deployer.deploy.return_value = "✅ Successfully deployed to dist/app.py"
     deployer.deploy_to_github.return_value = "✅ Opened PR for review: https://github.com/me/repo/pull/1"
@@ -175,29 +177,61 @@ def _supervised_agents(code="x = 1", decisions=(), reviews=(), fixes=()):
         SupervisorAgent=MagicMock(return_value=supervisor),
         CoderAgent=MagicMock(return_value=coder),
         ReviewerAgent=MagicMock(return_value=reviewer),
+        TesterAgent=MagicMock(return_value=tester),
         DebuggerAgent=MagicMock(return_value=debugger),
         DeployerAgent=MagicMock(return_value=deployer),
         ExplainerAgent=MagicMock(return_value=explainer),
+        run_tests=MagicMock(
+            side_effect=list(test_results) if test_results is not None else None,
+            return_value=TestResult(passed=True) if test_results is None else None,
+        ),
     )
-    return classes, supervisor, reviewer, debugger, deployer
+    return classes, supervisor, reviewer, tester, debugger, deployer
 
 
 class TestRunSupervisedPipeline:
-    def test_review_then_deploy_to_disk(self):
-        classes, supervisor, reviewer, debugger, deployer = _supervised_agents(
-            decisions=["REVIEW\nlooks new", "DEPLOY\nit passed"],
+    def test_review_then_test_then_deploy_to_disk(self):
+        classes, supervisor, reviewer, tester, debugger, deployer = _supervised_agents(
+            decisions=["REVIEW\nlooks new", "TEST\nchecking", "DEPLOY\nit passed"],
             reviews=[Review(True)],
         )
         with patch.multiple(plugin_server, **classes):
             result = plugin_server.run_supervised_pipeline("set x", "app.py")
-        assert result.startswith("✅ Supervised pipeline complete after 2 step(s), 0 retries.")
+        assert result.startswith("✅ Supervised pipeline complete after 3 step(s), 0 retries.")
+        tester.write_tests.assert_called_once_with("x = 1", "set x")
         deployer.deploy.assert_called_once_with("x = 1", "app.py")
         deployer.deploy_to_github.assert_not_called()
         debugger.fix.assert_not_called()
 
-    def test_debug_then_review_then_deploy(self):
-        classes, supervisor, reviewer, debugger, deployer = _supervised_agents(
-            decisions=["DEBUG\nfix it", "REVIEW\nrecheck", "DEPLOY\ngo"],
+    def test_deploy_before_tests_pass_is_converted_into_a_test_step(self):
+        """The Supervisor's own gate isn't trusted: asking to DEPLOY before any
+        TEST has passed gets silently redirected into a TEST step instead."""
+        classes, supervisor, reviewer, tester, debugger, deployer = _supervised_agents(
+            decisions=["DEPLOY\ntoo early", "DEPLOY\nnow for real"],
+        )
+        with patch.multiple(plugin_server, **classes):
+            result = plugin_server.run_supervised_pipeline("set x", "app.py")
+        assert result.startswith("✅ Supervised pipeline complete after 2 step(s), 0 retries.")
+        assert supervisor.decide.call_count == 2
+        tester.write_tests.assert_called_once_with("x = 1", "set x")
+        deployer.deploy.assert_called_once_with("x = 1", "app.py")
+
+    def test_debug_resets_a_previously_passed_test(self):
+        """A DEBUG after a passing TEST invalidates that pass: the new code
+        hasn't actually been tested yet, so DEPLOY must force a fresh TEST."""
+        classes, supervisor, reviewer, tester, debugger, deployer = _supervised_agents(
+            decisions=["TEST\nchecking", "DEBUG\ntweak it anyway", "DEPLOY\ngo", "DEPLOY\nnow for real"],
+            fixes=["x = 2"],
+        )
+        with patch.multiple(plugin_server, **classes):
+            result = plugin_server.run_supervised_pipeline("set x", "app.py")
+        assert result.startswith("✅ Supervised pipeline complete after 4 step(s), 1 retry.")
+        assert tester.write_tests.call_count == 2   # once before DEBUG, once forced after
+        deployer.deploy.assert_called_once_with("x = 2", "app.py")
+
+    def test_debug_then_review_then_test_then_deploy(self):
+        classes, supervisor, reviewer, tester, debugger, deployer = _supervised_agents(
+            decisions=["DEBUG\nfix it", "REVIEW\nrecheck", "TEST\ncheck", "DEPLOY\ngo"],
             reviews=[Review(True)],
             fixes=["x = 2"],
         )
@@ -208,7 +242,9 @@ class TestRunSupervisedPipeline:
         deployer.deploy.assert_called_once_with("x = 2", "app.py")
 
     def test_deploy_to_github_when_requested(self):
-        classes, *_ , deployer = _supervised_agents(decisions=["DEPLOY\ngo"])
+        classes, *_, deployer = _supervised_agents(
+            decisions=["DEPLOY\ntoo early", "DEPLOY\nnow for real"],
+        )
         with patch.multiple(plugin_server, **classes):
             result = plugin_server.run_supervised_pipeline(
                 "set x", "app.py", deploy_target="github", repo="me/repo"
@@ -233,18 +269,19 @@ class TestRunSupervisedPipeline:
         assert "unachievable" in result
 
     def test_halts_on_unrecognized_decision_without_calling_other_agents(self):
-        classes, supervisor, reviewer, debugger, deployer = _supervised_agents(
+        classes, supervisor, reviewer, tester, debugger, deployer = _supervised_agents(
             decisions=["MAYBE\nnot sure"]
         )
         with patch.multiple(plugin_server, **classes):
             result = plugin_server.run_supervised_pipeline("set x", "app.py")
         assert "unrecognized supervisor output" in result
         reviewer.review.assert_not_called()
+        tester.write_tests.assert_not_called()
         debugger.fix.assert_not_called()
         deployer.deploy.assert_not_called()
 
     def test_stops_after_max_retries_without_asking_supervisor_again(self):
-        classes, supervisor, reviewer, debugger, deployer = _supervised_agents(
+        classes, supervisor, reviewer, tester, debugger, deployer = _supervised_agents(
             decisions=["DEBUG\n1", "DEBUG\n2", "DEBUG\n3", "DEBUG\n4"],
             fixes=["x = 2", "x = 3", "x = 4"],
         )
@@ -255,7 +292,7 @@ class TestRunSupervisedPipeline:
         deployer.deploy.assert_not_called()
 
     def test_stops_at_step_cap_when_never_deciding_to_debug(self):
-        classes, supervisor, reviewer, debugger, deployer = _supervised_agents(
+        classes, supervisor, reviewer, tester, debugger, deployer = _supervised_agents(
             decisions=["REVIEW\nagain"] * 8,
             reviews=[Review(False, ["still broken"])] * 8,
         )

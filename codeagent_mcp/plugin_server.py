@@ -279,7 +279,9 @@ def run_supervised_pipeline(
 ) -> str:
     """
     Supervisor-driven pipeline: an LLM Supervisor decides, step by step, whether to
-    review, debug, deploy, or halt — instead of run_full_pipeline's fixed loop.
+    review, test, debug, deploy, or halt — instead of run_full_pipeline's fixed loop.
+    DEPLOY is refused and converted into a TEST step if tests haven't passed yet,
+    regardless of what the Supervisor asks for.
 
     Args:
         prompt:        Plain-English description of what the code should do.
@@ -293,14 +295,16 @@ def run_supervised_pipeline(
     logger.info(f"run_supervised_pipeline called → {deploy_target}:{filename}")
 
     supervisor = SupervisorAgent()
-    coder, reviewer, debugger, deployer, explainer = (
-        CoderAgent(), ReviewerAgent(), DebuggerAgent(), DeployerAgent(), ExplainerAgent()
+    coder, reviewer, tester, debugger, deployer, explainer = (
+        CoderAgent(), ReviewerAgent(), TesterAgent(), DebuggerAgent(),
+        DeployerAgent(), ExplainerAgent()
     )
 
     logger.info("Phase 1 — Generating code...")
     current_code = coder.generate_response(prompt)
     history = ["Coder produced initial code."]
     last_review: Review | None = None
+    tests_passed = False
     debug_count = 0
 
     for step in range(1, MAX_SUPERVISOR_STEPS + 1):
@@ -319,18 +323,37 @@ def run_supervised_pipeline(
             last_review = _check(current_code, prompt, reviewer)
             history.append(f"Reviewer said: {last_review.as_text().splitlines()[0]}")
 
+        elif decision == "TEST":
+            test_code = tester.write_tests(current_code, prompt)
+            last_test = run_tests(current_code, test_code)
+            tests_passed = last_test.passed
+            history.append(f"Tester said: {last_test.as_text().splitlines()[0]}")
+
         elif decision == "DEBUG":
             debug_count += 1
+            tests_passed = False   # the code is changing; any earlier pass is now stale
             current_code = debugger.fix(
                 current_code, last_review.as_text() if last_review else "", prompt
             )
             history.append(f"Debugger produced a revised version (retry {debug_count}/{MAX_RETRIES}).")
 
         elif decision == "DEPLOY":
+            if deploy_target == "github" and not repo:
+                return "ERROR: deploy_target='github' requires a repo argument."
+
+            if not tests_passed:
+                logger.warning("Supervisor tried to DEPLOY before tests passed — forcing a TEST step.")
+                test_code = tester.write_tests(current_code, prompt)
+                last_test = run_tests(current_code, test_code)
+                tests_passed = last_test.passed
+                history.append(
+                    f"Forced TEST before deploy (Supervisor asked to deploy early): "
+                    f"{last_test.as_text().splitlines()[0]}"
+                )
+                continue
+
             logger.info(f"Phase — Deploying to {deploy_target}...")
             if deploy_target == "github":
-                if not repo:
-                    return "ERROR: deploy_target='github' requires a repo argument."
                 deploy_result = deployer.deploy_to_github(current_code, filename, repo)
             else:
                 deploy_result = deployer.deploy(current_code, filename)
